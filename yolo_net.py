@@ -605,7 +605,126 @@ def _label_assign_function(max_iou_ref, max_iou_box, num_pos_ancs, labels_size, 
     
     return img_labels_assigned, ious
 
+
+
+#%% Cost Function
+    
+def yolo_cost(labels_assigned, obj_present, predictions, labels_ph, batch_size=1, lambda_coord=5, lambda_noobj=0.5):
+    """
+    ARGS:
+        labels_assigned = indices of bounding box predictions assigned to labels
+                        Elements: (batch_num, label_num, assigned_pred_ind)
+                        Shape: (num_assigned_labels, 3)     
+        obj_present = indices of bounding box predictions assigned/or with iou
+                        over threshold. Elements: (batch_num, assigned_pred_ind)
+                        Shape: (num_assigned_labels+num_labels_over_threshold, 2)
+        predictions = outputted predictions from YOLOv3. 
+                        Shape: (num_batches, num_predicted_boxes, 4+1+num_classes)
+        lambda_coord = constant which weights loss from bounding box parameters
+        lambda_noobj = constant which weights loss from unassigned bounding boxes.
+        
+    RETURNS:
+        total_cost = total cost for forward pass of YOLO network
+    
+    """
+
+    #Ensure gradient backpropagates into 'predictions' only
+    labels_assigned = tf.stop_gradient(labels_assigned)
+    #Gather the assigned bounding boxes and the labels they were assigned to
+    assigned_pred = tf.gather_nd(predictions, labels_assigned[:,1:3])
+    assigned_labs_inds = tf.stack([labels_assigned[:,1],labels_assigned[:,0]],axis=1)
+    assigned_labs = tf.gather_nd(labels_ph, assigned_labs_inds)
+        
+    #Calculate the cost of the bounding box predictions
+    assigned_labs_hw = tf.sqrt(assigned_labs[:,2:4])
+    assigned_pred_hw = tf.sqrt(assigned_pred[:,2:4])
+    cost_hw = tf.reduce_sum((assigned_pred_hw - assigned_labs_hw)**2)
+    cost_xy = tf.reduce_sum((assigned_pred[:,0:2] - assigned_labs[:,0:2])**2)
+    
+    #Calculate the cost of the class predictions using softmax cross entropy
+    assigned_labs_cls = assigned_labs[:,4:]
+    assigned_labs_cls = tf.stop_gradient(assigned_labs_cls)
+    assigned_pred_cls = assigned_pred[:,5:]
+    cost_cls = tf.nn.softmax_cross_entropy_with_logits_v2(labels = assigned_labs_cls,
+                                                          logits = assigned_pred_cls)
+    cost_cls = tf.reduce_sum(cost_cls)
+    
+    #Calculate the cost of objectness predictions for the assigned bounding boxes using log loss
+    cost_obj = -tf.log(assigned_pred[:,4])
+    cost_obj = tf.reduce_sum(cost_obj)
+    
+    assigned_cost = lambda_coord*(cost_xy + cost_hw) + cost_cls + cost_obj
+     
+    #Create tensor of indices for all predictions
+    batch_range = tf.reshape(tf.expand_dims(tf.range(batch_size),axis=0),[batch_size,-1])
+    batch_range = tf.expand_dims(tf.tile(batch_range,[1,10647]),axis=0)
+    pred_range = tf.expand_dims(tf.reshape(tf.tile(tf.range(10647),[batch_size]),[batch_size,-1]),axis=0)
+    noobj_present_ind = tf.stack([batch_range, pred_range],axis=3)
+
+    #Using obj_present create a mask which removes indices from noobj_present_ind
+    #if the bounding box was assigned or had an IoU over the IoU threshold with any object
+    obj_present_mask=tf.SparseTensor(indices=tf.cast(obj_present,tf.int64),
+                                values=tf.zeros(tf.shape(obj_present)[0]),
+                                dense_shape=[batch_size,10647])
+    obj_present_mask=tf.sparse_reorder(obj_present_mask)
+    obj_present_mask=tf.sparse_tensor_to_dense(obj_present_mask,1)
+    obj_present_mask=tf.cast(obj_present_mask,bool)
+    obj_present_mask=tf.expand_dims(obj_present_mask,axis=0)
+    noobj_present_ind=tf.boolean_mask(noobj_present_ind, obj_present_mask)
+    
+    #Select the objectness values from unassigned bounding boxes
+    #and calculate the cost using log loss
+    objectness_ind = tf.ones([tf.shape(noobj_present_ind)[0],1],dtype=tf.int32)*4
+    noobj_present_ind = tf.concat([noobj_present_ind, objectness_ind], axis=1)
+    noobj_present_ind = tf.stop_gradient(noobj_present_ind)  #Ensure gradient only goes into predictions
+    noobj_present = tf.gather_nd(predictions, noobj_present_ind)
+    unassigned_cost = -tf.log(1-noobj_present)
+    unassigned_cost = tf.reduce_sum(unassigned_cost)
+    unassigned_cost = lambda_noobj*unassigned_cost
+    
+    total_cost = assigned_cost + unassigned_cost
+
+    return total_cost
+
+
+
 #%%General TF functions
+
+
+def yolo_non_max_suppression(scores, boxes, classes, max_boxes = 10, iou_threshold = 0.5):
+    """
+    Applies Non-max suppression (NMS) to set of boxes
+    
+    ARGS:
+    scores -- tensor of shape (None,), output of yolo_filter_boxes()
+    boxes -- tensor of shape (None, 4), output of yolo_filter_boxes() that have been scaled to the image size (see later)
+    classes -- tensor of shape (None,), output of yolo_filter_boxes()
+    max_boxes -- integer, maximum number of predicted boxes you'd like
+    iou_threshold -- real value, "intersection over union" threshold used for NMS filtering
+    
+    Returns:
+    scores -- tensor of shape (, None), predicted score for each box
+    boxes -- tensor of shape (4, None), predicted box coordinates
+    classes -- tensor of shape (, None), predicted class for each box
+    
+    Note: The "None" dimension of the output tensors has obviously to be less than max_boxes. Note also that this
+    function will transpose the shapes of scores, boxes, classes. This is made for convenience.
+    """
+    
+    max_boxes_tensor = K.variable(max_boxes, dtype='int32')     # tensor to be used in tf.image.non_max_suppression()
+    K.get_session().run(tf.variables_initializer([max_boxes_tensor])) # initialize variable max_boxes_tensor
+    
+    # Use tf.image.non_max_suppression() to get the list of indices corresponding to boxes you keep
+    nms_indices = tf.image.non_max_suppression(boxes, scores, max_boxes)
+    
+    # Use K.gather() to select only nms_indices from scores, boxes and classes
+    scores = tf.gather(scores, nms_indices)
+    boxes = tf.gather(boxes, nms_indices)
+    classes = tf.gather(classes, nms_indices)
+    
+    return scores, boxes, classes
+
+
 
 def tf_iou(box1, box2, mode='hw'):
     """
