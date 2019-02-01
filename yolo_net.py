@@ -16,19 +16,26 @@ import tensorflow.contrib.slim as slim
 
 
 #%% YOLO Network
-def yolo_v3(inputs, num_classes, anchors, data_format='NCHW', is_training=False, batch_norm_epsilon=1e-05, batch_norm_decay=0.9,
-            leaky_relu_alpha=0.1, reuse=False):
+def yolo_v3(inputs, num_classes, anchors, data_format='NCHW', is_training=False,
+            batch_norm_epsilon=1e-05, batch_norm_decay=0.9, leaky_relu_alpha=0.1, reuse=False):
     """
-    Creates YOLO v3 model.
+    Creates the YOLOv3 network consisting of Darknet-53 (52 layers) and a 3 stage RPN detection
 
-    :param inputs: a 4-D tensor of size [batch_size, height, width, channels].
-        Dimension batch_size may be undefined. The channel order is RGB.
-    :param num_classes: number of predicted classes.
-    :param is_training: whether is training or not.
-    :param data_format: data format NCHW or NHWC.
-    :param reuse: whether or not the network and its variables should be reused.
-    :return:
+    ARGS:
+        inputs = RGB Image tensor - shape (batch_size, img_height, img_width, img_channels)
+        num_classes = number of classes in data - integer
+        is_training = is the network to be trained - boolean
+        data_format = NCHW or NHWC - NCHW is faster for training and NHWC for inference
+        batch_norm_epsilon = batch normalisation parameter -float
+        batch_norm_decay = batch normalisation parameter -float
+        leaky_relu_alpha = leaky relu slope parameter -float
+        reuse = are variables to be reused - boolean
+        
+    RETURNS:
+        detections = tensor output from YOLOv3 network - shape (batch_size, 10647, 5+num_classes) 
+    
     """
+
     # it will be needed later on
     img_size = inputs.get_shape().as_list()[1:3]
 
@@ -105,22 +112,42 @@ def _yolo_block(inputs, filters, data_format='NCHW'):
     """
     Builds a typical YOLO block in the detection layer, that effectively reduces
     the number of channels to the required input (2*filters)
+    
+    ARGS:
+        inputs = tensor - input tensor from previous layer - Shape: (batch_size, prev_layer_dims, prev_layer_filters)
+        filters = integer - number of filters for route output
+        data_format = string - NCHW or NHWC
+    RETURNS:
+        route = tensor - output without final layer for passing to different scales
+        outputs = tensor - output for detection at a scale, channels=filters*2
     """
     
-    inputs = _conv2d_fixed_padding(inputs, filters, 1, data_format=data_format)
-    inputs = _conv2d_fixed_padding(inputs, filters * 2, 3, data_format=data_format)
-    inputs = _conv2d_fixed_padding(inputs, filters, 1, data_format=data_format)
-    inputs = _conv2d_fixed_padding(inputs, filters * 2, 3, data_format=data_format)
-    inputs = _conv2d_fixed_padding(inputs, filters, 1, data_format=data_format)
-    route = inputs
-    inputs = _conv2d_fixed_padding(inputs, filters * 2, 3, data_format=data_format)
+    outputs = _conv2d_fixed_padding(inputs, filters, 1, data_format=data_format)
+    outputs = _conv2d_fixed_padding(outputs, filters * 2, 3, data_format=data_format)
+    outputs = _conv2d_fixed_padding(outputs, filters, 1, data_format=data_format)
+    outputs = _conv2d_fixed_padding(outputs, filters * 2, 3, data_format=data_format)
+    outputs = _conv2d_fixed_padding(outputs, filters, 1, data_format=data_format)
+    route = outputs
+    outputs = _conv2d_fixed_padding(outputs, filters * 2, 3, data_format=data_format)
     
-    return route, inputs
+    return route, outputs
 
 
 
 
 def _detection_layer(inputs, num_classes, anchors, img_size, data_format):
+    """
+    
+    ARGS:
+        inputs = tensor - input tensor from previous layer - Shape: (batch_size, prev_layer_dims, prev_layer_filters)
+        num_classes = integer - number of classes for classification task
+        anchors = the pre-defined anchors for bounding boxes
+        img_size = integer - image dimensions, assuming square
+        data_format = string - NCHW or NHWC
+    RETURNS:
+        detections = tensor - final output detections for a scale - Shape: (batch_size, num_predictions, 5+num_classes)
+    
+    """
     num_anchors = len(anchors)
     
     #Create the final detection layer, where outputs = num of kernels for each grid cell
@@ -174,7 +201,16 @@ def _detection_layer(inputs, num_classes, anchors, img_size, data_format):
 
 
 def _upsample(inputs, out_shape, data_format='NHWC'):
+    """
     
+    ARGS:
+        inputs = tensor - input tensor from previous layer - Shape: (batch_size, prev_layer_dims, prev_layer_filters)
+        out_shape = list - shape of the darknet-53 route to which upsampled layer is concatenated
+        data_format = string - NCHW or NHWC
+    RETURNS:
+        outputs = tensor - output tensor from this layer that has been upsampled
+    
+    """
     if data_format =='NCHW':
         inputs = tf.transpose(inputs, [0, 2, 3, 1])
         height_n = out_shape[3]
@@ -183,29 +219,29 @@ def _upsample(inputs, out_shape, data_format='NHWC'):
         height_n = out_shape[2]
         width_n = out_shape[1]
         
-    inputs = tf.image.resize_nearest_neighbor(inputs, (height_n, width_n))
+    outputs = tf.image.resize_nearest_neighbor(inputs, (height_n, width_n))
     
     if data_format == 'NCHW':
-        inputs = tf.transpose(inputs, [0, 3, 1, 2])
+        outputs = tf.transpose(outputs, [0, 3, 1, 2])
         
-    inputs = tf.identity(inputs, name='upsampled')
+    outputs = tf.identity(outputs, name='upsampled')
     
-    return inputs
+    return outputs
 
 #%% Darknet
 
 @tf.contrib.framework.add_arg_scope
 def _fixed_padding(inputs, kernel_size, data_format = 'NCHW', mode='CONSTANT', **kwargs):
     
-    """Pads input H and W with a fixed amount of padding, independent of input size.
+    """
+    Pads input H and W with a fixed amount of padding, independent of input size.
     
-    Arguments::
-        inputs - tensor, [batch, C, H, W] or [batch, H, W, C]
-        kernel_size - positive integer, kernel to be used in conv2d or max_pool2d
-        mode - sring, the mode for tf.pad
-        
-    Returns::
-        padded_inputs - tensor, same format as inputs and padded if kernel_size > 1
+    ARGS:
+        inputs = tensor, (batch, C, H, W) or (batch, H, W, C)
+        kernel_size = positive integer, kernel to be used in conv2d or max_pool2d
+        mode = sring, the mode for tf.pad    
+    RETURNS:
+        padded_inputs = tensor, same format as inputs and padded if kernel_size > 1
     """
     pad_total = kernel_size - 1
     pad_beg = pad_total // 2
@@ -222,21 +258,38 @@ def _fixed_padding(inputs, kernel_size, data_format = 'NCHW', mode='CONSTANT', *
 def _conv2d_fixed_padding(inputs, filters, kernel_size, strides = 1, data_format='NCHW'):
     """
     Adds a 2D convolutional layer to inputs and pads the image if necessary
+    ARGS:
+        inputs = tensor - input tensor from previous layer - Shape: (batch_size, prev_layer_dims, prev_layer_filters)
+        filters = integer - number of filters to apply to layer/number of channels in output
+        kernel_size = integer/list - size and shape of filters
+        strides = integer/list - length of each stride over input
+        data_format = string - NCHW or NHWC
+    RETURNS:
+        outputs = tensor - output tensor from this layer that has been convoluted
+    
     """
     
     if (strides > 1):     #If layer needs fixed padding
         inputs = _fixed_padding(inputs, kernel_size, data_format = data_format)
         
-    inputs = slim.conv2d(inputs, filters, kernel_size, stride = strides, 
+    outputs = slim.conv2d(inputs, filters, kernel_size, stride = strides, 
                               padding =( 'SAME' if strides == 1 else 'VALID'))
     
-    return inputs
+    return outputs
 
 
 def _darknet_53_block(inputs, filters, num_blocks=1, data_format='NCHW'):
     """
     Constructs typical blocks used in Darknet consisting of two conv layers
     and a residual throughput
+    ARGS:
+        inputs = tensor - input tensor from previous layer - Shape: (batch_size, prev_layer_dims, prev_layer_filters)
+        filters = integer - number of filters to apply to layer/number of channels in output
+        num_blocks = integer - number of darknet blocks to apply
+        data_format = string - NCHW or NHWC
+    RETURNS:
+        inputs = tensor - output tensor from this layer that has been convoluted
+    
     """
     for i in range(num_blocks):
         residual = inputs
@@ -250,8 +303,12 @@ def _darknet_53_block(inputs, filters, num_blocks=1, data_format='NCHW'):
 def darknet53(inputs, data_format='NCHW'):
     """
     Builds the darknet model not including the avgpool, connected or softmax layers
-    also returns the outputs at 2 additional scales
-    for the FPN-inspired detection module
+    also returns the outputs at 2 additional scales for the FPN detection stage
+    ARGS:
+        inputs = tensor - input tensor from previous layer - Shape: (batch_size, prev_layer_dims, prev_layer_filters)
+        data_format = string - NCHW or NHWC
+    RETURNS:
+        outputs = tensor - output tensor from this layer that has been convoluted
     """
     inputs = _conv2d_fixed_padding(inputs, 32, 3, data_format=data_format)
     inputs = _conv2d_fixed_padding(inputs, 64, 3, strides=2, data_format=data_format)
@@ -265,9 +322,9 @@ def darknet53(inputs, data_format='NCHW'):
     inputs = _darknet_53_block(inputs, 256, num_blocks=8, data_format=data_format)
     scale_2 = inputs
     inputs = _conv2d_fixed_padding(inputs, 1024, 3, strides=2, data_format=data_format)
-    inputs = _darknet_53_block(inputs, 512, num_blocks=4, data_format=data_format)
+    outputs = _darknet_53_block(inputs, 512, num_blocks=4, data_format=data_format)
     
-    return scale_1, scale_2, inputs
+    return scale_1, scale_2, outputs
 
 
 #%% TF Assign Label function and TF Loops
@@ -379,15 +436,15 @@ def tf_assign_label(labels, labels_grids, detections, iou_threshold=0.5, num_scs
 def _batch_iou_loop(batch_num, batch_size, labels_size, num_pos_ancs, detections, labels_grids, labels, pos_ious):
     """
     ARGS:
-        - batch_num & batch_size = counter and limit for loop
-        - labels_size = limit for nested label loop
-        - num_pos_ancs = number of possible anchors for each label
-        - labels = (x, y, h, w, classes) - tensor shape (num_batches, num_labels, 4+num_classes)
-        - labels_grids = grid box indices - tensor shape (num_batches, num_labels, num_scales*num_anchors)
-        - detections = outputted detections from YOLOv3. 
+        batch_num & batch_size = counter and limit for loop
+        labels_size = limit for nested label loop
+        num_pos_ancs = number of possible anchors for each label
+        labels = (x, y, h, w, classes) - tensor shape (num_batches, num_labels, 4+num_classes)
+        labels_grids = grid box indices - tensor shape (num_batches, num_labels, num_scales*num_anchors)
+        detections = outputted detections from YOLOv3. 
                         Shape: (num_batches, num_predicted_boxes, 4+1+num_classes)
     RETURNS:
-        - pos_ious = tensor containing IoUs of labels with possible bounding box detections
+        pos_ious = tensor containing IoUs of labels with possible bounding box detections
                     Elements: (IoU, bounding box detection index)
                     Shape: (batch_size, label_size, num_pos_ancs, 2)
 
@@ -421,14 +478,14 @@ def _labels_iou_loop(img_labels_num, labels_size, num_pos_ancs, img_detections, 
     """
     Nested loop inside batch_iou_loop
     ARGS:
-        - img_labels_num & labels_size = counter and limit for loop
-        - num_pos_ancs = number of possible anchors for each label
-        - img_labels = (x, y, h, w, classes) - tensor shape (num_labels, 4+num_classes)
-        - img_labels_grids = grid box indices - tensor shape (num_labels, num_scales*num_anchors)
-        - img_detections = outputted detections from YOLOv3. 
+        img_labels_num & labels_size = counter and limit for loop
+        num_pos_ancs = number of possible anchors for each label
+        img_labels = (x, y, h, w, classes) - tensor shape (num_labels, 4+num_classes)
+        img_labels_grids = grid box indices - tensor shape (num_labels, num_scales*num_anchors)
+        img_detections = outputted detections from YOLOv3. 
                             Shape: (num_predicted_boxes, 4+1+num_classes)
     RETURNS:
-        - img_pos_ious = tensor containing IoUs of labels with possible bounding box detections
+        img_pos_ious = tensor containing IoUs of labels with possible bounding box detections
                     Elements: (IoU, bounding box detection index)
                     Shape: (label_size, num_pos_ancs, 2)
 
@@ -463,13 +520,13 @@ def _label_iou_loop(label_num, num_pos_ancs, img_detections, label_grids, label,
     """
     Nested loop inside labels_iou_loop
     ARGS:
-        - label_num & num_pos_ancs = counter and limit for loop
-        - label = (x, y, h, w, classes) - tensor shape (4+num_classes)
-        - label_grids = grid box indices - tensor shape (num_scales*num_anchors)
-        - img_detections = outputted detections from YOLOv3. 
+        label_num & num_pos_ancs = counter and limit for loop
+        label = (x, y, h, w, classes) - tensor shape (4+num_classes)
+        label_grids = grid box indices - tensor shape (num_scales*num_anchors)
+        img_detections = outputted detections from YOLOv3. 
                             Shape: (num_predicted_boxes, 4+1+num_classes)
     RETURNS:
-        - lab_ious = tensor containing IoUs of labels with possible bounding box detections
+        lab_ious = tensor containing IoUs of labels with possible bounding box detections
                     Elements: (IoU, bounding box detection index)
                     Shape: (num_pos_ancs, 2)
 
@@ -493,21 +550,21 @@ def _label_iou_loop(label_num, num_pos_ancs, img_detections, label_grids, label,
 def _batch_assign_loop(batch_num, batch_size, labels_size, num_pos_ancs, ious, refs, labels_assigned):
     """
     ARGS:
-        - batch_num & batch_size = counter and limit for loop
-        - labels_size = limit for nested label loop
-        - num_pos_ancs = number of possible anchors for each label
-        - ious = tensor containing IoUs of labels with possible bounding box detections
-                    Elements: (IoU)
-                    Shape: (batch_size, label_size, num_pos_ancs)
-        - refs = tensor containing indexes of bounding box detections which were used
-                 to calculate the IoUs in the iou tensor.
-                    Elements: (bounding box detection index)
-                    Shape: (batch_size, label_size, num_pos_ancs)
+        batch_num & batch_size = counter and limit for loop
+        labels_size = limit for nested label loop
+        num_pos_ancs = number of possible anchors for each label
+        ious = tensor containing IoUs of labels with possible bounding box detections
+                  Elements: (IoU)
+                  Shape: (batch_size, label_size, num_pos_ancs)
+        refs = tensor containing indexes of bounding box detections which were used
+               to calculate the IoUs in the iou tensor.
+                  Elements: (bounding box detection index)
+                  Shape: (batch_size, label_size, num_pos_ancs)
     RETURNS:
-        - labels_assigned = assigns each label it can a unique bounding box based
-                            on the highest IoUs
-                    Elements: (assigned bounding box detection index)
-                    Shape: (batch_size, label_size)
+        labels_assigned = assigns each label it can a unique bounding box based
+                          on the highest IoUs
+                  Elements: (assigned bounding box detection index)
+                  Shape: (batch_size, label_size)
 
     """
     #Labels Loop    
@@ -534,21 +591,21 @@ def _batch_assign_loop(batch_num, batch_size, labels_size, num_pos_ancs, ious, r
 def _labels_assign_loop(assign_comp, labels_size, num_pos_ancs, ious, refs, batch_num, img_labels_assigned):
     """
     ARGS:
-        - assign_comp = condition for loop
-        - labels_size = limit for nested label loop
-        - num_pos_ancs = number of possible anchors for each label
-        - ious = tensor containing IoUs of labels with possible bounding box detections
-                    Elements: (IoU)
-                    Shape: (batch_size, label_size, num_pos_ancs)
-        - refs = tensor containing indexes of bounding box detections which were used
-                 to calculate the IoUs in the iou tensor.
-                    Elements: (bounding box detection index)
-                    Shape: (batch_size, label_size, num_pos_ancs)
+        assign_comp = condition for loop
+        labels_size = limit for nested label loop
+        num_pos_ancs = number of possible anchors for each label
+        ious = tensor containing IoUs of labels with possible bounding box detections
+                  Elements: (IoU)
+                  Shape: (batch_size, label_size, num_pos_ancs)
+        refs = tensor containing indexes of bounding box detections which were used
+               to calculate the IoUs in the iou tensor.
+                  Elements: (bounding box detection index)
+                  Shape: (batch_size, label_size, num_pos_ancs)
     RETURNS:
-        - labels_assigned = assigns each label it can a unique bounding box based
-                            on the highest IoUs
-                    Elements: (assigned bounding box detection index)
-                    Shape: (label_size)       
+        labels_assigned = assigns each label it can a unique bounding box based
+                          on the highest IoUs
+                  Elements: (assigned bounding box detection index)
+                  Shape: (label_size)       
 
     """
 
@@ -691,47 +748,35 @@ def yolo_cost(labels_assigned, obj_present, predictions, labels_ph, batch_size=1
 #%%General TF functions
 
 
-def yolo_non_max_suppression(scores, boxes, classes, max_boxes = 10, iou_threshold = 0.5):
+def yolo_non_max_suppression(predictions, max_boxes = 10, iou_threshold = 0.5):
     """
     Applies Non-max suppression (NMS) to set of boxes
-    
     ARGS:
-    scores -- tensor of shape (None,), output of yolo_filter_boxes()
-    boxes -- tensor of shape (None, 4), output of yolo_filter_boxes() that have been scaled to the image size (see later)
-    classes -- tensor of shape (None,), output of yolo_filter_boxes()
-    max_boxes -- integer, maximum number of predicted boxes you'd like
-    iou_threshold -- real value, "intersection over union" threshold used for NMS filtering
-    
-    Returns:
-    scores -- tensor of shape (, None), predicted score for each box
-    boxes -- tensor of shape (4, None), predicted box coordinates
-    classes -- tensor of shape (, None), predicted class for each box
-    
-    Note: The "None" dimension of the output tensors has obviously to be less than max_boxes. Note also that this
-    function will transpose the shapes of scores, boxes, classes. This is made for convenience.
+        predictions = tensor - shape (num_bounding_boxes, 5+num_classes)
+        max_boxes = integer - maximum number of predicted boxes you'd like
+        iou_threshold = float - IoU threshold used for NMS filtering
+    RETURNS:
+        filtered_predictions = tensor - shape (<=max_boxes, 5+num_classes)
+        
     """
+    boxes = predictions[:,:4]
+    scores = predictions[:,4]
     
-    max_boxes_tensor = K.variable(max_boxes, dtype='int32')     # tensor to be used in tf.image.non_max_suppression()
-    K.get_session().run(tf.variables_initializer([max_boxes_tensor])) # initialize variable max_boxes_tensor
-    
-    # Use tf.image.non_max_suppression() to get the list of indices corresponding to boxes you keep
     nms_indices = tf.image.non_max_suppression(boxes, scores, max_boxes)
     
-    # Use K.gather() to select only nms_indices from scores, boxes and classes
-    scores = tf.gather(scores, nms_indices)
-    boxes = tf.gather(boxes, nms_indices)
-    classes = tf.gather(classes, nms_indices)
+    filtered_predictions = tf.gather(predictions, nms_indices)
     
-    return scores, boxes, classes
+    return filtered_predictions
 
 
 
 def tf_iou(box1, box2, mode='hw'):
     """
     ARGS: 
-        box1, box2 = tensors containing box parameters and depending on mode: 
+        box1, box2 = tensor - containing box parameters and depending on mode: 
                     Elements: (x,y,w,h) or (x_tpl, y_tpl, x_btr, y_btr)
                     Shape: (num_boxes, 4)
+        mode = string - hw or not
     RETURNS: 
         tf_ious = tensor containing the IoUs of the inputs
                   Shape: (num_boxes)
@@ -814,7 +859,14 @@ def _tf_unique_2d(x):
     return x
 
 def _tf_zero_mask(zero_st, tensor_len, length=1):
-    #Creates a tensor of ones with elements of zeros with a given length at a specified position
+    """
+    ARGS:
+        zero_st = integer - element at which zeros start
+        tensor_len = integer - how large is the tensor
+        length = integer - how many elements should be zero
+    RETURNS:
+        mask = tensor - ones with elements of zeros with at a specified position
+    """
     tensor_len = tf.cast(tensor_len, tf.int64)
     top = tf.ones(zero_st)
     mid = tf.zeros(length)
@@ -823,7 +875,16 @@ def _tf_zero_mask(zero_st, tensor_len, length=1):
     return mask
 
 def _tf_one_mask(one_st, tensor_len, value=1, length=1):
-    #Creates a tensor of zeros with elements of a given value with a given length at a specified position
+    """
+    ARGS:
+        zero_st = integer - element at which the ones/given values start
+        tensor_len = integer - how large is the tensor
+        value = what number should the value be, default=1
+        length = integer - how many elements should be one/the given value
+    RETURNS:
+        mask = tensor - zeros with elements of a given value at a specified position
+
+    """
     tensor_len = tf.cast(tensor_len, tf.int64)
     top = tf.zeros(one_st)
     mid = tf.ones(length)
