@@ -20,10 +20,10 @@ import yolo_net
 mode = 'train'  #train, test or predict  
 num_images = 7200
 split = False     #Which set of anchors to use
-trn_img_dir = '/media/aegeus/projects/dissertation/software/ICDAR2017_MLT/processed_data/training_images'
-trn_lab_dir = '/media/aegeus/projects/dissertation/software/ICDAR2017_MLT/processed_data/training_labels_onehot'
-val_img_dir = '/media/aegeus/projects/dissertation/software/ICDAR2017_MLT/processed_data/validation_images'
-val_lab_dir = '/media/aegeus/projects/dissertation/software/ICDAR2017_MLT/processed_data/validation_labels_onehot'
+trn_img_dir = '/media/aegeus/projects/own/dissertation/software/ICDAR2017_MLT/processed_data/training_images'
+trn_lab_dir = '/media/aegeus/projects/own/dissertation/software/ICDAR2017_MLT/processed_data/training_labels_onehot'
+val_img_dir = '/media/aegeus/projects/own/dissertation/software/ICDAR2017_MLT/processed_data/validation_images'
+val_lab_dir = '/media/aegeus/projects/own/dissertation/software/ICDAR2017_MLT/processed_data/validation_labels_onehot'
 
 if split == False: #Use the anchors from Kmeans on entire training dataset
     anchors = [(6,5),(18,10),(37,13),(25,41),(63,23),(105,33),(67,92),(173,57),(110,234),(296,95)]
@@ -143,7 +143,7 @@ def train_yolo():
             for batch_num in range(batch_range):
                 batch_st = 1+(batch_num*batch_size)
                 img_range = range(batch_st, batch_st+batch_size)
-                images = load_images_fd(img_range, trn_img_dir)
+                images = load_images_fd(img_range, trn_img_dir, tensor=False)
                 labels = load_labels_fd(img_range, trn_lab_dir)
                 labels_gr = assign_grid_box(labels)
                 
@@ -219,7 +219,7 @@ def load_labels_fd(labels_range, labels_dir, num_classes=9):
     return labels
 
     
-def load_images_fd(imgs_range, img_dir, normalise=True, img_type =".png", tensor=False, augment=True):
+def load_images_fd(imgs_range, img_dir, normalise=True, img_type =".png", tensor=True, augment=True):
     
     
     if type(imgs_range)==int:
