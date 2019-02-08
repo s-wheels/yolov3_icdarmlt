@@ -9,7 +9,6 @@ Takes input folders for images and ground truth
 Builds YOLO network and runs it in tensorflow
 """
 
-import sys
 import tensorflow as tf
 import numpy as np
 import os
@@ -120,7 +119,7 @@ def train_yolo():
         
         
     labels_assigned, obj_present = yolo_net.tf_assign_label(labels_ph, labels_gr_ph, predictions)
-    cost = yolo_cost(labels_assigned, obj_present, predictions, labels_ph, batch_size)
+    cost = yolo_net.yolo_cost(labels_assigned, obj_present, predictions, labels_ph, batch_size)
     
     global_step = tf.Variable(0, trainable=False)
     decayed_learning_rate = tf.train.exponential_decay(FLAGS.learning_rate, global_step,
