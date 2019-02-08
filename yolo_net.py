@@ -44,8 +44,6 @@ def yolo_v3(inputs, num_classes, anchors, data_format='NCHW', is_training=False,
     # transpose the inputs to NCHW
     if data_format == 'NCHW':
         inputs = tf.transpose(inputs, [0, 3, 1, 2])
-
-    inputs = inputs / 255
     
     # set batch norm params
     batch_norm_params = {
