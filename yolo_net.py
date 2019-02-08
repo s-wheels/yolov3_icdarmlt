@@ -7,7 +7,9 @@ Created on Sun Nov 11 22:44:01 2018
 
 Creates the darknet-53 network using tensorflow
 As found in 'YOLOv3: An Incremental Improvement by Joseph Redmon and Ali Farhadi'
-In addition it builds the YOLO FPN-based detection layers on top of that.
+Builds the YOLO FPN-based detection layers on top of that.
+Also contains functions that can assign the bounding boxes to labels and calculate
+the cost using an altered YOLOv3 loss function with softmax cross entropy.
 
 """
 
