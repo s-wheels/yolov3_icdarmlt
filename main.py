@@ -20,10 +20,10 @@ import yolo_net
 mode = 'train'  #train, test or predict  
 num_images = 7200
 split = False     #Which set of anchors to use
-trn_img_dir = '/media/aegeus/projects/own/dissertation/software/ICDAR2017_MLT/processed_data/training_images'
-trn_lab_dir = '/media/aegeus/projects/own/dissertation/software/ICDAR2017_MLT/processed_data/training_labels_onehot'
-val_img_dir = '/media/aegeus/projects/own/dissertation/software/ICDAR2017_MLT/processed_data/validation_images'
-val_lab_dir = '/media/aegeus/projects/own/dissertation/software/ICDAR2017_MLT/processed_data/validation_labels_onehot'
+trn_img_dir = 'ICDAR2017_MLT/processed_data/training_images'
+trn_lab_dir = 'ICDAR2017_MLT/processed_data/training_labels_onehot'
+val_img_dir = 'ICDAR2017_MLT/processed_data/validation_images'
+val_lab_dir = 'ICDAR2017_MLT/processed_data/validation_labels_onehot'
 
 if split == False: #Use the anchors from Kmeans on entire training dataset
     anchors = [(6,5),(18,10),(37,13),(25,41),(63,23),(105,33),(67,92),(173,57),(110,234),(296,95)]
@@ -72,7 +72,7 @@ tf.app.flags.DEFINE_string('data_dir', os.getcwd() + '/dataset/',
                             'Directory where the dataset will be stored and checkpoint.')
 tf.app.flags.DEFINE_integer('log_frequency', 10,
                             'Number of steps between logging results to the console and saving summaries')
-tf.app.flags.DEFINE_integer('save_model', 30, 'Number of steps between model saves')
+tf.app.flags.DEFINE_integer('save_model', 1, 'Number of steps between model saves')
 tf.app.flags.DEFINE_string('ckpt_file', 'saved_icdarmlt_model/model.ckpt', 'Where to save checkpoint models')
 tf.app.flags.DEFINE_string('pretrained_file', 'saved_darknet_model/model.ckpt', 'Pre-trained Darknet model')
 
