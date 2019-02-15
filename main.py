@@ -17,7 +17,7 @@ import time
 import yolo_net
 
 ## TRAINING IS BEST USING NCHW, INFERENCE/PREDICTION IS BEST USING NHWC
-mode = 'train'  #train, test or predict  
+data_format = 'NCHW'
 num_images = 7200
 split = False     #Which set of anchors to use
 trn_img_dir = 'ICDAR2017_MLT/processed_data/training_images'
@@ -32,6 +32,7 @@ else:              #Use the anchors from the split dataset
     
 
 ## set hyperparams
+
 batch_norm_decay = 0.9
 batch_norm_epsilon = 1e-05
 leaky_relu = 0.1
@@ -96,7 +97,7 @@ tf.app.flags.DEFINE_string('data_format', 'NCHW', 'Data format: NCHW (gpu only) 
 
 
     
-def train_yolo():
+def yolo():
     
     
     #Configure GPU Options
